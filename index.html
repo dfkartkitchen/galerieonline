@@ -1,0 +1,960 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Otevřená galerie</title>
+<style>*,*::before,*::after{box-sizing:border-box}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}</style>
+</head>
+<body>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: full-bleed 3D sál, nad ním tenké HUD lišty u okrajů a modální „štítky“ jako v galerii */
+:root{
+  --bg:#e9e6e0; --panel:#fbfaf7; --fg:#1c1b19; --muted:#6b675f; --line:#d9d4ca;
+  --accent:#2340b8; --accent-fg:#ffffff; --danger:#b3261e; --scrim:rgba(28,27,25,.38);
+  --display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --mono:"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#17181b; --panel:#1f2024; --fg:#ecebe7; --muted:#a29e96; --line:#34353a;
+  --accent:#8ea2ff; --accent-fg:#0f1530; --danger:#ff8a80; --scrim:rgba(0,0,0,.55); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#17181b; --panel:#1f2024; --fg:#ecebe7; --muted:#a29e96; --line:#34353a;
+  --accent:#8ea2ff; --accent-fg:#0f1530; --danger:#ff8a80; --scrim:rgba(0,0,0,.55); color-scheme:dark}
+
+[hidden]{display:none!important}
+html,body{height:100%;overflow:hidden}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+#scene{position:fixed;inset:0;display:block;width:100%;height:100%;touch-action:none;cursor:grab;outline:none}
+#scene.dragging{cursor:grabbing}
+
+.hud{position:fixed;z-index:5;pointer-events:none}
+.hud > *{pointer-events:auto}
+#hudTop{top:calc(env(safe-area-inset-top,0px) + 14px);left:max(16px, env(safe-area-inset-left,0px));right:max(16px, env(safe-area-inset-right,0px));
+  display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.brand{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:10px 14px;display:grid;gap:2px;min-width:0}
+.brand b{font-family:var(--display);font-weight:700;font-size:18px;letter-spacing:-.01em}
+.meta{font-family:var(--mono);font-size:11.5px;color:var(--muted);letter-spacing:.02em}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+button{font:inherit;cursor:pointer;border-radius:4px;border:1px solid var(--line);background:var(--panel);color:var(--fg);padding:9px 14px;font-weight:500}
+button:hover{border-color:var(--fg)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+button.primary:hover{filter:brightness(1.08)}
+button.danger{color:var(--danger);border-color:currentColor;background:transparent}
+button:disabled{opacity:.45;cursor:not-allowed}
+
+#prompt{bottom:calc(env(safe-area-inset-bottom,0px) + 22px);left:50%;transform:translateX(-50%);max-width:min(560px, calc(100vw - 32px));
+  background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:10px 14px;display:flex;gap:12px;align-items:center;cursor:pointer}
+#prompt .t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#prompt .t i{color:var(--muted)}
+kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-bottom-width:2px;border-radius:3px;padding:1px 6px;color:var(--fg);background:var(--bg)}
+#hint{bottom:calc(env(safe-area-inset-bottom,0px) + 22px);left:max(16px, env(safe-area-inset-left,0px));font-family:var(--mono);font-size:11.5px;color:var(--muted);
+  background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:8px 12px;display:flex;gap:10px;flex-wrap:wrap;max-width:calc(100vw - 32px)}
+@media (max-width:900px){#hint{display:none}}
+
+#stick{bottom:calc(env(safe-area-inset-bottom,0px) + 24px);left:calc(max(16px, env(safe-area-inset-left,0px)) + 8px);width:116px;height:116px;border-radius:50%;
+  background:color-mix(in srgb, var(--panel) 70%, transparent);border:1px solid var(--line);touch-action:none}
+#knob{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;background:var(--accent);opacity:.9}
+@media (pointer:fine){#stick{display:none}}
+@media (pointer:coarse){#prompt{bottom:calc(env(safe-area-inset-bottom,0px) + 156px)}}
+
+#toast{top:calc(env(safe-area-inset-top,0px) + 86px);left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:9px 14px;border-radius:4px;
+  font-size:14px;max-width:calc(100vw - 32px);transition:opacity .25s}
+
+.overlay{position:fixed;inset:0;z-index:20;background:var(--scrim);display:grid;place-items:center;
+  padding:calc(env(safe-area-inset-top,0px) + 16px) max(16px, env(safe-area-inset-right,0px)) calc(env(safe-area-inset-bottom,0px) + 16px) max(16px, env(safe-area-inset-left,0px));overflow:auto}
+#entry{place-items:center start;background:linear-gradient(90deg,var(--scrim) 0%,transparent 62%)}
+#entry .card{width:min(100%,430px);max-height:calc(100dvh - 32px);overflow:auto;gap:14px;padding:22px}
+@media (max-width:760px){#entry{place-items:end center;background:linear-gradient(0deg,var(--scrim) 0%,transparent 70%)} #entry .card{max-height:56dvh}}
+fieldset.opt{border:0;margin:0;padding:0;display:grid;gap:7px;min-width:0}
+fieldset.opt legend{font-size:12.5px;color:var(--muted);padding:0;margin-bottom:6px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chips input{position:absolute;opacity:0;pointer-events:none}
+.chips label.chip{padding:6px 11px;border:1px solid var(--line);border-radius:999px;cursor:pointer;font-size:13px;background:var(--bg)}
+.chips input:checked + label.chip{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.chips input:focus-visible + label.chip{outline:2px solid var(--accent);outline-offset:2px}
+#lookUI{display:grid;gap:12px}
+#lookUI .swatches label{width:28px;height:28px}
+#btnLight[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.card{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:6px;width:min(100%, 480px);padding:26px;display:grid;gap:18px;box-shadow:0 20px 60px rgba(0,0,0,.18)}
+.card.wide{width:min(100%, 980px)}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+h1{font-family:var(--display);font-weight:700;font-size:clamp(30px, 6vw, 44px);line-height:1.02;letter-spacing:-.025em;margin:0;text-wrap:balance}
+h2{font-family:var(--display);font-weight:700;font-size:24px;letter-spacing:-.015em;margin:0;text-wrap:balance}
+p{margin:0;line-height:1.5;max-width:62ch}
+.muted{color:var(--muted)}
+.small{font-size:13px}
+label.f{display:grid;gap:6px;font-size:13px;color:var(--muted)}
+input[type=text],select{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:10px 12px;width:100%;min-width:0}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.row.end{justify-content:flex-end}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:520px){.grid2{grid-template-columns:1fr}}
+.swatches{display:flex;gap:10px;flex-wrap:wrap}
+.swatches input{position:absolute;opacity:0;pointer-events:none}
+.swatches label{width:34px;height:34px;border-radius:50%;cursor:pointer;border:3px solid var(--panel);box-shadow:0 0 0 1px var(--line)}
+.swatches input:checked + label{box-shadow:0 0 0 2px var(--fg)}
+.swatches input:focus-visible + label{outline:2px solid var(--accent);outline-offset:3px}
+.note{font-family:var(--mono);font-size:11.5px;line-height:1.55;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}
+
+#drop{border:1.5px dashed var(--line);border-radius:6px;min-height:170px;display:grid;place-items:center;text-align:center;padding:16px;cursor:pointer;position:relative;background:var(--bg)}
+#drop.over{border-color:var(--accent)}
+#drop img{max-height:220px;max-width:100%;box-shadow:0 6px 18px rgba(0,0,0,.18)}
+#file{position:absolute;inset:0;opacity:0;cursor:pointer}
+
+.detail{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:26px;align-items:start}
+@media (max-width:760px){.detail{grid-template-columns:1fr}}
+.detail .art{background:var(--bg);display:grid;place-items:center;padding:18px;border-radius:4px;min-width:0}
+.detail .art img{max-height:68vh;max-width:100%;box-shadow:0 10px 28px rgba(0,0,0,.25)}
+.wall-label{display:grid;gap:6px;min-width:0}
+.wall-label .a{font-family:var(--display);font-weight:700;font-size:22px}
+.wall-label .ti{font-style:italic;font-size:19px}
+.wall-label .m{font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+.tag{display:inline-block;font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);border-radius:3px;padding:2px 6px;color:var(--muted);justify-self:start}
+.confirm{border:1px solid var(--danger);border-radius:4px;padding:12px;display:grid;gap:10px}
+.err{color:var(--danger);font-size:13px}
+@media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+
+<canvas id="scene" tabindex="0" aria-label="3D výstavní sál"></canvas>
+
+<div class="hud" id="hudTop">
+  <div class="brand"><b>Otevřená galerie</b><span class="meta" id="stat">Načítám sál…</span><span class="meta" id="online" hidden></span></div>
+  <div class="actions">
+    <button class="primary" id="btnUpload" type="button">Vystavit obraz</button>
+    <button id="btnLight" type="button" aria-pressed="false">Zhasnout</button>
+    <button id="btnLook" type="button">Postava</button>
+    <button id="btnHelp" type="button" aria-label="Ovládání">Ovládání</button>
+  </div>
+</div>
+<div class="hud" id="hint"><span><kbd>W A S D</kbd> chůze</span><span><kbd>Shift</kbd> rychleji</span><span>táhni myší · rozhlížení</span><span>kolečko · přiblížení</span><span><kbd>E</kbd> detail obrazu</span><span><kbd>L</kbd> světla</span></div>
+<div class="hud" id="prompt" hidden role="button" tabindex="0"><span class="t" id="promptText"></span><kbd>E</kbd></div>
+<div class="hud" id="stick" aria-hidden="true"><div id="knob"></div></div>
+<div class="hud" id="toast" hidden></div>
+
+<!-- Vstup -->
+<div class="overlay" id="entry">
+  <form class="card" id="entryForm" autocomplete="off">
+    <span class="eyebrow">Virtuální výstavní sál</span>
+    <h1 id="entryTitle">Otevřená galerie</h1>
+    <p class="muted">Vyberte si, jak bude vaše postava vypadat, a vstupte do sálu.</p>
+    <label class="f">Vaše jméno
+      <input type="text" id="inName" maxlength="40" placeholder="např. Anna Nováková" required>
+    </label>
+    <div id="lookUI"></div>
+    <div><button type="button" id="btnRandom">Náhodný vzhled</button></div>
+    <span class="err" id="entryErr" hidden></span>
+    <div class="row end"><button class="primary" type="submit" id="entrySubmit">Vstoupit do sálu</button></div>
+    <p class="note" id="entryNote">Tento náhled běží bez připojení ke sdílenému sálu: vystavené obrazy se uloží jen ve vašem prohlížeči.</p>
+  </form>
+</div>
+
+<!-- Nahrání -->
+<div class="overlay" id="uploadDlg" hidden>
+  <form class="card" id="upForm" autocomplete="off">
+    <span class="eyebrow">Nové dílo</span>
+    <h2>Vystavit obraz</h2>
+    <div id="drop"><input type="file" id="file" accept="image/*" aria-label="Vyberte obrázek"><span id="dropText" class="muted">Přetáhněte sem obrázek<br>nebo klikněte a vyberte soubor</span></div>
+    <div class="grid2">
+      <label class="f">Autor<input type="text" id="upAuthor" maxlength="60" required></label>
+      <label class="f">Název díla<input type="text" id="upTitle" maxlength="80" placeholder="Bez názvu"></label>
+      <label class="f">Technika<input type="text" id="upTech" maxlength="60" placeholder="olej na plátně"></label>
+      <label class="f">Rok<input type="text" id="upYear" maxlength="9" inputmode="numeric"></label>
+    </div>
+    <p class="small muted">Obraz se pověsí na nejbližší volné místo u vaší postavy.</p>
+    <span class="err" id="upErr" hidden></span>
+    <div class="row end"><button type="button" id="upCancel">Zrušit</button><button class="primary" type="submit" id="upSubmit">Pověsit na zeď</button></div>
+  </form>
+</div>
+
+<!-- Detail -->
+<div class="overlay" id="detailDlg" hidden>
+  <div class="card wide">
+    <div class="detail">
+      <div class="art"><img id="dImg" alt=""></div>
+      <div class="wall-label">
+        <span class="tag" id="dTag">Ukázka</span>
+        <span class="a" id="dAuthor"></span>
+        <span class="ti" id="dTitle"></span>
+        <span class="m" id="dMeta"></span>
+        <span class="m" id="dBy"></span>
+        <div id="dConfirm" class="confirm" hidden>
+          <span>Sundat obraz ze zdi? Tento krok nejde vrátit.</span>
+          <div class="row"><button class="danger" type="button" id="dYes">Ano, sundat</button><button type="button" id="dNo">Ponechat</button></div>
+        </div>
+        <div class="row" style="margin-top:14px"><button type="button" id="dClose" class="primary">Zpět do sálu</button><button type="button" class="danger" id="dRemove">Sundat ze zdi</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Ovládání -->
+<div class="overlay" id="helpDlg" hidden>
+  <div class="card">
+    <span class="eyebrow">Ovládání</span>
+    <h2>Jak se pohybovat</h2>
+    <div class="grid2 small">
+      <span><kbd>W A S D</kbd> / šipky</span><span>chůze</span>
+      <span><kbd>Shift</kbd></span><span>rychlejší chůze</span>
+      <span>tažení myší</span><span>rozhlížení</span>
+      <span>kolečko myši</span><span>přiblížení kamery</span>
+      <span><kbd>E</kbd> nebo klik na obraz</span><span>detail díla</span>
+      <span><kbd>L</kbd> nebo tlačítko Zhasnout</span><span>zhasne sál, rozsvítí reflektory nad obrazy</span>
+      <span>mobil</span><span>joystick vlevo dole, tažením prstu rozhlížení</span>
+      <span>postavy se jménem</span><span>skuteční návštěvníci</span>
+      <span>postavy bez jména</span><span>počítačem řízení hosté</span>
+    </div>
+    <div class="row end"><button class="primary" type="button" id="helpClose">Rozumím</button></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+const $ = s => document.querySelector(s);
+const store = {
+  get(k){ try{ return localStorage.getItem(k) }catch(e){ return null } },
+  set(k,v){ try{ localStorage.setItem(k,v) }catch(e){} }
+};
+const OUTFITS=['#2340b8','#8c1d2c','#d49a1f','#2f6b52','#5b3a8c','#1e1e22','#e8e2d6','#1f5f6b'];
+const SKINS=['#f6dcc6','#e9bf9a','#c98e62','#8d5a3b','#5b3a26'];
+const HAIRC=['#1f1a17','#5a3b22','#a8652e','#d8b36a','#a9a9a9','#a8323e'];
+const LOOK_LIM={o:OUTFITS.length,s:SKINS.length,h:5,c:HAIRC.length,t:4,g:2,d:3};
+const DEFAULT_LOOK={o:0,s:1,h:1,c:1,t:0,g:0,d:0};
+function cleanLook(l){ const r={}; for(const k in LOOK_LIM){ const v=(l&&Number.isInteger(l[k]))?l[k]:DEFAULT_LOOK[k]; r[k]=(v>=0&&v<LOOK_LIM[k])?v:DEFAULT_LOOK[k]; } return r; }
+function randomLook(){ const r={}; for(const k in LOOK_LIM) r[k]=Math.floor(Math.random()*LOOK_LIM[k]); r.g=Math.random()<.3?1:0; if(Math.random()<.5) r.t=0; return r; }
+let savedLook=null; try{ savedLook=JSON.parse(store.get('og-look')||'null'); }catch(e){}
+const visitor = { name: store.get('og-name') || '', look: cleanLook(savedLook||DEFAULT_LOOK) };
+const LOOK_UI=[
+  {k:'d',label:'Oblečení',opts:['Kalhoty','Šaty','Kabát']},
+  {k:'o',label:'Barva oblečení',colors:OUTFITS},
+  {k:'s',label:'Pleť',colors:SKINS},
+  {k:'h',label:'Účes',opts:['Bez vlasů','Krátké','Dlouhé','Drdol','Kudrny']},
+  {k:'c',label:'Barva vlasů',colors:HAIRC},
+  {k:'t',label:'Na hlavě',opts:['Nic','Baret','Cylindr','Kšiltovka']},
+  {k:'g',label:'Brýle',opts:['Bez brýlí','S brýlemi']}
+];
+const lookUI=$('#lookUI');
+LOOK_UI.forEach(sec=>{ let html=`<fieldset class="opt"><legend>${sec.label}</legend><div class="${sec.colors?'swatches':'chips'}">`;
+  (sec.colors||sec.opts).forEach((v,i)=>{ const id=`lk-${sec.k}-${i}`, chk=visitor.look[sec.k]===i?'checked':'';
+    html+=`<input type="radio" name="lk-${sec.k}" id="${id}" value="${i}" ${chk}>`+(sec.colors?`<label for="${id}" style="background:${v}" title="${sec.label} ${i+1}"></label>`:`<label class="chip" for="${id}">${v}</label>`); });
+  lookUI.insertAdjacentHTML('beforeend', html+'</div></fieldset>'); });
+function syncLookUI(){ for(const k in LOOK_LIM){ const el=document.getElementById(`lk-${k}-${visitor.look[k]}`); if(el) el.checked=true; } }
+$('#inName').value = visitor.name;
+
+if(!window.THREE){ $('#entryErr').hidden=false; $('#entryErr').textContent='3D knihovnu se nepodařilo načíst. Zkontrolujte připojení a obnovte stránku.'; return; }
+
+/* ================= scéna ================= */
+const canvas = $('#scene');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+const ANISO = renderer.capabilities.getMaxAnisotropy();
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#e7e4de');
+scene.fog = new THREE.Fog('#e7e4de', 34, 80);
+const camera = new THREE.PerspectiveCamera(58, 1, 0.1, 100);
+const hemi = new THREE.HemisphereLight(0xffffff, 0x9c8a72, 0.62); scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff6ea, 0.38); sun.position.set(6,12,5); scene.add(sun);
+const amb = new THREE.AmbientLight(0xffffff, 0.12); scene.add(amb);
+const DAY_BG=new THREE.Color('#e7e4de'), NIGHT_BG=new THREE.Color('#0b0c10');
+
+const RW = 18, RD = 12, H = 6.2;              // půl-šířka, půl-hloubka, výška sálu
+const PX = 7, PL = 4, PT = 0.15, PH = 3.8;     // dvě příčky v ose z na x = ±7
+const occluders = [];
+const OBST = [];                               // překážky pro chůzi {x,z,hx,hz}
+function canvasTex(w,h,draw){ const c=document.createElement('canvas'); c.width=w; c.height=h; draw(c.getContext('2d'),w,h); const t=new THREE.CanvasTexture(c); t.encoding=THREE.sRGBEncoding; t.anisotropy=ANISO; return t; }
+
+// podlaha – mramorová šachovnice
+const floorTex = canvasTex(1024,1024,(g,w,h)=>{ let s=19; const rnd=()=>{ s=(s*16807)%2147483647; return s/2147483647; };
+  const T=w/2;
+  for(let i=0;i<2;i++) for(let j=0;j<2;j++){ const dark=(i+j)%2===1, x=i*T, y=j*T;
+    g.fillStyle=dark?'#26252a':'#ebe5da'; g.fillRect(x,y,T,T);
+    const gr=g.createLinearGradient(x,y,x+T,y+T); gr.addColorStop(0,dark?'rgba(255,255,255,.04)':'rgba(120,100,80,.06)'); gr.addColorStop(1,'rgba(0,0,0,0)'); g.fillStyle=gr; g.fillRect(x,y,T,T);
+    g.save(); g.beginPath(); g.rect(x,y,T,T); g.clip();
+    for(let k=0;k<7;k++){ g.strokeStyle=dark?`rgba(210,200,185,${.06+rnd()*.1})`:`rgba(110,95,80,${.05+rnd()*.1})`; g.lineWidth=.6+rnd()*2.2; g.beginPath();
+      let px=x+rnd()*T, py=y; g.moveTo(px,py); for(let q=0;q<6;q++){ px+= (rnd()-.5)*120; py+=T/6; g.lineTo(px,py); } g.stroke(); }
+    g.restore();
+    g.fillStyle='rgba(150,130,90,.55)'; g.fillRect(x,y,T,3); g.fillRect(x,y,3,T); }
+});
+floorTex.wrapS=floorTex.wrapT=THREE.RepeatWrapping; floorTex.repeat.set(RW*2/3, RD*2/3);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(RW*2, RD*2), new THREE.MeshPhongMaterial({map:floorTex, shininess:90, specular:new THREE.Color('#5a5650')}));
+floor.rotation.x=-Math.PI/2; scene.add(floor);
+// stíny mraků putující po podlaze (průhledná vrstva nad podlahou)
+const cloudTex = canvasTex(512,512,(g,w,h)=>{ let s=11; const rnd=()=>{ s=(s*16807)%2147483647; return s/2147483647; };
+  for(let i=0;i<26;i++){ const x=rnd()*w, y=rnd()*h, r=40+rnd()*110; const gr=g.createRadialGradient(x,y,2,x,y,r);
+    gr.addColorStop(0,'rgba(40,40,60,.22)'); gr.addColorStop(1,'rgba(40,40,60,0)'); g.fillStyle=gr;
+    for(const dx of [-w,0,w]) for(const dy of [-h,0,h]){ g.save(); g.translate(dx,dy); g.beginPath(); g.arc(x,y,r,0,Math.PI*2); g.fill(); g.restore(); } } });
+cloudTex.wrapS=cloudTex.wrapT=THREE.RepeatWrapping; cloudTex.repeat.set(1.6,1.1);
+const clouds = new THREE.Mesh(new THREE.PlaneGeometry(RW*2, RD*2), new THREE.MeshBasicMaterial({map:cloudTex,transparent:true,depthWrite:false}));
+clouds.rotation.x=-Math.PI/2; clouds.position.y=.012; scene.add(clouds);
+
+// strop se světlíkem
+const ceilMat = new THREE.MeshLambertMaterial({color:'#f4f3f0'});
+const SKY_W = 9, SKY_D = 16;
+[[0, -(RD+SKY_D/2)/2, RW*2, RD-SKY_D/2], [0, (RD+SKY_D/2)/2, RW*2, RD-SKY_D/2],
+ [-(RW+SKY_W/2)/2, 0, RW-SKY_W/2, SKY_D], [(RW+SKY_W/2)/2, 0, RW-SKY_W/2, SKY_D]].forEach(([x,z,w,d])=>{
+  const c=new THREE.Mesh(new THREE.PlaneGeometry(w,d), ceilMat); c.rotation.x=Math.PI/2; c.position.set(x,H,z); scene.add(c); });
+const skyTex = canvasTex(256,512,(g,w,h)=>{ const gr=g.createLinearGradient(0,0,0,h); gr.addColorStop(0,'#cfe3f3'); gr.addColorStop(1,'#eef5fb'); g.fillStyle=gr; g.fillRect(0,0,w,h); });
+const sky = new THREE.Mesh(new THREE.PlaneGeometry(SKY_W,SKY_D), new THREE.MeshBasicMaterial({map:skyTex})); sky.rotation.x=Math.PI/2; sky.position.y=H+1.2; scene.add(sky);
+const beamMat = new THREE.MeshLambertMaterial({color:'#e2ded6'});
+// šachta světlíku
+[[0,H+.6,-SKY_D/2,SKY_W,1.2,.1],[0,H+.6,SKY_D/2,SKY_W,1.2,.1],[-SKY_W/2,H+.6,0,.1,1.2,SKY_D],[SKY_W/2,H+.6,0,.1,1.2,SKY_D]].forEach(([x,y,z,w,h,d])=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),beamMat); m.position.set(x,y,z); scene.add(m); });
+for(let z=-SKY_D/2+2; z<SKY_D/2; z+=2){ const m=new THREE.Mesh(new THREE.BoxGeometry(SKY_W,.12,.12),beamMat); m.position.set(0,H+.3,z); scene.add(m); }
+// světelné kužele ze světlíku
+const shaftTex = canvasTex(64,256,(g,w,h)=>{ const gr=g.createLinearGradient(0,0,0,h); gr.addColorStop(0,'rgba(255,250,235,.55)'); gr.addColorStop(1,'rgba(255,250,235,0)'); g.fillStyle=gr; g.fillRect(0,0,w,h); });
+const shaftMat = new THREE.MeshBasicMaterial({map:shaftTex,transparent:true,depthWrite:false,opacity:.35,side:THREE.DoubleSide,blending:THREE.AdditiveBlending});
+const shafts = [];
+[-5,0,5].forEach((z,i)=>{ const m=new THREE.Mesh(new THREE.PlaneGeometry(SKY_W*.9,H), shaftMat); m.position.set(0,H/2,z); m.rotation.x=-.18; m.rotation.y=i*.35-.35; scene.add(m); shafts.push(m); });
+
+// stěny
+const wallMat = new THREE.MeshLambertMaterial({color:'#efe8dc'});
+const panelMat = new THREE.MeshLambertMaterial({color:'#e3d9c7'});
+const accentMat = new THREE.MeshLambertMaterial({color:'#23392f'});
+const goldMat = new THREE.MeshPhongMaterial({color:'#b8893b', specular:new THREE.Color('#ffe2a0'), shininess:70});
+const skirtMat = goldMat;
+function box(w,h,d,x,y,z,mat,occ){ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat); m.position.set(x,y,z); scene.add(m); if(occ) occluders.push(m); return m; }
+box(RW*2+.6,H,.3, 0,H/2,-RD-.15, wallMat,true); box(RW*2+.6,H,.3, 0,H/2, RD+.15, wallMat,true);
+box(.3,H,RD*2, -RW-.15,H/2,0, wallMat,true);   box(.3,H,RD*2,  RW+.15,H/2,0, wallMat,true);
+// obklad stěn (lambrie), zlaté lišty, římsa
+[[0,-RD,RW*2,0],[0,RD,RW*2,0],[-RW,0,RD*2,1],[RW,0,RD*2,1]].forEach(([x,z,len,side])=>{
+  const sx=side?.05:len, sz=side?len:.05, ox=side?(x<0?.025:-.025):0, oz=side?0:(z<0?.025:-.025);
+  box(sx,1.0,sz, x+ox,.5,z+oz, panelMat);
+  box(side?.07:len,.05,side?len:.07, x+ox*1.4,1.02,z+oz*1.4, goldMat);
+  box(side?.06:len,.1,side?len:.06, x+ox*1.2,.05,z+oz*1.2, goldMat);
+  box(side?.18:len,.16,side?len:.18, x+(side?(x<0?.09:-.09):0),H-.08,z+(side?0:(z<0?.09:-.09)), goldMat); });
+[-PX,PX].forEach(x=>{ box(PT*2,PH,PL*2, x,PH/2,0, accentMat,true); box(PT*2+.08,.08,PL*2+.08, x,PH+.04,0, goldMat); box(PT*2+.06,.1,PL*2+.06, x,.05,0, goldMat); OBST.push({x,z:0,hx:PT,hz:PL}); });
+// sametové lavice
+const velvetMat = new THREE.MeshLambertMaterial({color:'#6e1f2b'});
+[[0,6.5],[0,-6.5],[-12.5,0],[12.5,0]].forEach(([x,z],i)=>{ const rot=i>1; const w=rot?.7:2.6, d=rot?2.6:.7;
+  box(w,.22,d, x,.42,z, velvetMat);
+  const btn=new THREE.MeshLambertMaterial({color:'#561723'});
+  for(let k=-2;k<=2;k++){ const b=new THREE.Mesh(new THREE.SphereGeometry(.035,8,6),btn); b.position.set(x+(rot?0:k*.5),.535,z+(rot?k*.5:0)); scene.add(b); }
+  [[-1,-1],[-1,1],[1,-1],[1,1]].forEach(([a,b])=>box(.06,.32,.06, x+a*(w/2-.08),.16,z+b*(d/2-.08), goldMat));
+  OBST.push({x,z,hx:w/2,hz:d/2}); });
+// lustry
+const crystalMat = new THREE.MeshStandardMaterial({color:'#fff8e8', emissive:new THREE.Color('#ffd98a'), emissiveIntensity:.9, roughness:.2, metalness:.1, transparent:true, opacity:.92});
+const chandeliers=[];
+[[-12.5,-6],[-12.5,6],[12.5,-6],[12.5,6]].forEach(([x,z],ci)=>{
+  const g=new THREE.Group(); g.position.set(x,H-1.5,z); scene.add(g);
+  const chain=new THREE.Mesh(new THREE.CylinderGeometry(.02,.02,1.5,6),goldMat); chain.position.y=.75; g.add(chain);
+  [.85,.5].forEach((r,ri)=>{ const ring=new THREE.Mesh(new THREE.TorusGeometry(r,.03,8,48),goldMat); ring.rotation.x=Math.PI/2; ring.position.y=-ri*.3; g.add(ring);
+    const n=ri?10:18; for(let k=0;k<n;k++){ const a=k/n*Math.PI*2; const c=new THREE.Mesh(new THREE.OctahedronGeometry(.06),crystalMat); c.scale.y=1.8; c.position.set(Math.cos(a)*r,-ri*.3-.14,Math.sin(a)*r); g.add(c);
+      if(k%3===0){ const cd=new THREE.Mesh(new THREE.CylinderGeometry(.025,.025,.14,8),crystalMat); cd.position.set(Math.cos(a)*r,-ri*.3+.08,Math.sin(a)*r); g.add(cd); } } });
+  const core=new THREE.Mesh(new THREE.SphereGeometry(.16,16,12),crystalMat); core.position.y=-.45; g.add(core);
+  chandeliers.push({g,ph:ci*1.1}); });
+// rostliny v rozích (jemně se pohupují)
+const potMat = new THREE.MeshLambertMaterial({color:'#b9b2a6'});
+const leafMat = new THREE.MeshLambertMaterial({color:'#3f6b4c'});
+const leafMat2 = new THREE.MeshLambertMaterial({color:'#5a8a5e'});
+const plants = [];
+[[-16.6,-10.6],[16.6,-10.6],[-16.6,10.6],[16.6,10.6]].forEach(([x,z],i)=>{
+  const pot=new THREE.Mesh(new THREE.CylinderGeometry(.45,.35,.8,20),potMat); pot.position.set(x,.4,z); scene.add(pot);
+  const crown=new THREE.Group(); crown.position.set(x,.8,z); scene.add(crown);
+  for(let k=0;k<9;k++){ const leaf=new THREE.Mesh(new THREE.ConeGeometry(.16,1.6+((k*37)%7)/10,6), k%2?leafMat:leafMat2);
+    const a=k/9*Math.PI*2; leaf.position.set(Math.cos(a)*.18,.8,Math.sin(a)*.18); leaf.rotation.z=Math.cos(a)*.45; leaf.rotation.x=Math.sin(a)*.45; crown.add(leaf); }
+  plants.push({crown,ph:i*1.7}); OBST.push({x,z,hx:.5,hz:.5}); });
+
+// kinetická skulptura uprostřed
+const pedestal = box(1.4,1.0,1.4, 0,.5,0, new THREE.MeshLambertMaterial({color:'#ece9e3'})); OBST.push({x:0,z:0,hx:.7,hz:.7});
+const sculpt = new THREE.Mesh(new THREE.TorusKnotGeometry(.55,.17,160,20,2,3), new THREE.MeshStandardMaterial({color:'#c8893a',metalness:.75,roughness:.28}));
+sculpt.position.set(0,1.95,0); scene.add(sculpt);
+// závěsný mobil pod světlíkem
+const mobile = new THREE.Group(); mobile.position.set(0,H-.1,0); scene.add(mobile);
+const wireMat = new THREE.LineBasicMaterial({color:'#2b2a28'});
+function wire(y1,y2,x=0){ const g=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x,y1,0),new THREE.Vector3(x,y2,0)]); return new THREE.Line(g,wireMat); }
+const mobileArms = [];
+(function build(parent,depth,len){
+  parent.add(wire(0,-.8));
+  const arm=new THREE.Group(); arm.position.y=-.8; parent.add(arm); mobileArms.push({g:arm,sp:.25+depth*.18,ph:depth*1.3});
+  const rod=new THREE.Mesh(new THREE.CylinderGeometry(.015,.015,len,6), new THREE.MeshLambertMaterial({color:'#2b2a28'})); rod.rotation.z=Math.PI/2; arm.add(rod);
+  const cols=['#c8322b','#1f3a8a','#e0a526','#2b2a28'];
+  const leaf=new THREE.Mesh(new THREE.CircleGeometry(.32-depth*.04,28), new THREE.MeshLambertMaterial({color:cols[depth%cols.length],side:THREE.DoubleSide}));
+  leaf.position.set(-len/2,-.45,0); arm.add(leaf); arm.add(wire(0,-.13,-len/2));
+  if(depth<3){ const sub=new THREE.Group(); sub.position.set(len/2,0,0); arm.add(sub); build(sub,depth+1,len*.72); }
+  else { const end=new THREE.Mesh(new THREE.CircleGeometry(.22,28), new THREE.MeshLambertMaterial({color:'#e0a526',side:THREE.DoubleSide})); end.position.set(len/2,-.4,0); arm.add(end); arm.add(wire(0,-.18,len/2)); }
+})(mobile,0,2.2);
+
+// prach ve světle
+const DUST=380, dustGeo=new THREE.BufferGeometry(), dustPos=new Float32Array(DUST*3), dustVel=new Float32Array(DUST);
+for(let i=0;i<DUST;i++){ dustPos[i*3]=(Math.random()-.5)*SKY_W; dustPos[i*3+1]=Math.random()*H; dustPos[i*3+2]=(Math.random()-.5)*SKY_D; dustVel[i]=.04+Math.random()*.08; }
+dustGeo.setAttribute('position',new THREE.BufferAttribute(dustPos,3));
+const dust=new THREE.Points(dustGeo,new THREE.PointsMaterial({color:'#fff3d6',size:.035,transparent:true,opacity:.7,depthWrite:false})); scene.add(dust);
+
+function updateAmbient(t,dt){
+  sculpt.rotation.y=t*.25; sculpt.rotation.x=Math.sin(t*.13)*.35; sculpt.position.y=1.95+Math.sin(t*.8)*.06;
+  mobileArms.forEach(a=>{ a.g.rotation.y=Math.sin(t*a.sp+a.ph)*1.2+t*a.sp*.3; });
+  mobile.rotation.z=Math.sin(t*.4)*.02;
+  chandeliers.forEach(c=>{ c.g.rotation.y=Math.sin(t*.15+c.ph)*.25; c.g.rotation.z=Math.sin(t*.6+c.ph)*.008; });
+  plants.forEach(p=>{ p.crown.rotation.z=Math.sin(t*.7+p.ph)*.035; p.crown.rotation.x=Math.cos(t*.5+p.ph)*.03; });
+  cloudTex.offset.x=(t*.006)%1; cloudTex.offset.y=(t*.0025)%1;
+  for(let i=0;i<DUST;i++){ const k=i*3; dustPos[k+1]-=dustVel[i]*dt; dustPos[k]+=Math.sin(t*.3+i)*.002; if(dustPos[k+1]<0) dustPos[k+1]=H; }
+  dustGeo.attributes.position.needsUpdate=true;
+}
+
+/* ================= rozsvítit / zhasnout ================= */
+let lightsOn=true, lightK=1;
+const haloMat=new THREE.MeshBasicMaterial({map:haloTex0(),transparent:true,depthWrite:false,opacity:.6,color:new THREE.Color('#fff6e8')});
+const coneMat=new THREE.MeshBasicMaterial({color:'#ffe2a8',transparent:true,depthWrite:false,opacity:0,side:THREE.DoubleSide,blending:THREE.AdditiveBlending});
+const fixMat=new THREE.MeshPhongMaterial({color:'#2a2622',emissive:new THREE.Color('#ffd27a'),emissiveIntensity:0,shininess:40});
+const DAY_HALO=new THREE.Color('#fff6e8'), NIGHT_HALO=new THREE.Color('#ffd79a'), DAY_SKY=new THREE.Color('#ffffff'), NIGHT_SKY=new THREE.Color('#1b2440');
+const dustMat=dust.material, cloudMat=clouds.material, skyMat=sky.material;
+function haloTex0(){ return canvasTex(256,256,(g,w,h)=>{ const gr=g.createRadialGradient(w/2,h/2,4,w/2,h/2,w/2);
+  gr.addColorStop(0,'rgba(255,255,255,1)'); gr.addColorStop(.5,'rgba(255,255,255,.5)'); gr.addColorStop(1,'rgba(255,255,255,0)'); g.fillStyle=gr; g.fillRect(0,0,w,h); }); }
+function applyLight(k){
+  const spot=1-k;
+  hemi.intensity=.025+.595*k; sun.intensity=.01+.37*k; amb.intensity=.015+.105*k;
+  scene.background.copy(NIGHT_BG).lerp(DAY_BG,k); scene.fog.color.copy(scene.background);
+  skyMat.color.copy(NIGHT_SKY).lerp(DAY_SKY,k);
+  shaftMat.opacity=(.28+Math.sin(clock.elapsedTime*.21)*.08)*k; cloudMat.opacity=k; dustMat.opacity=.15+.55*k;
+  crystalMat.emissiveIntensity=.12+.9*k;
+  haloMat.opacity=.55+.45*spot; haloMat.color.copy(DAY_HALO).lerp(NIGHT_HALO,spot);
+  coneMat.opacity=.11*spot; fixMat.emissiveIntensity=.15+1.2*spot;
+}
+function setLights(on){ lightsOn=on; const b=$('#btnLight'); b.textContent=on?'Zhasnout':'Rozsvítit'; b.setAttribute('aria-pressed',String(!on)); }
+
+/* ================= místa na zdech ================= */
+const SLOTS = [];
+[-15,-10,-5,0,5,10,15].forEach(x=>SLOTS.push({x, z:-RD, ry:0, y:2.15, wall:'zadní stěně', maxH:1.8}));
+[-15,-10,-5,0,5,10,15].forEach(x=>SLOTS.push({x, z: RD, ry:Math.PI, y:2.15, wall:'přední stěně', maxH:1.8}));
+[-7,-2.3,2.3,7].forEach(z=>SLOTS.push({x:-RW, z, ry:Math.PI/2, y:2.15, wall:'levé stěně', maxH:1.8}));
+[-7,-2.3,2.3,7].forEach(z=>SLOTS.push({x: RW, z, ry:-Math.PI/2, y:2.15, wall:'pravé stěně', maxH:1.8}));
+[-PX,PX].forEach(px=>{ const nm=px<0?'levé příčce':'pravé příčce';
+  [-2,2].forEach(z=>SLOTS.push({x:px-PT, z, ry:-Math.PI/2, y:1.95, wall:nm, maxH:1.5}));
+  [-2,2].forEach(z=>SLOTS.push({x:px+PT, z, ry: Math.PI/2, y:1.95, wall:nm, maxH:1.5})); });
+SLOTS.forEach(s=>{ s.nx=Math.sin(s.ry); s.nz=Math.cos(s.ry); });
+const hung = new Map();   // slot -> {rec, key, group, mesh}
+const clickables = [];
+const haloTex = canvasTex(256,256,(g,w,h)=>{ const gr=g.createRadialGradient(w/2,h*.42,4,w/2,h/2,w/2);
+  gr.addColorStop(0,'rgba(255,248,232,.95)'); gr.addColorStop(.55,'rgba(255,246,228,.45)'); gr.addColorStop(1,'rgba(255,246,228,0)'); g.fillStyle=gr; g.fillRect(0,0,w,h); });
+function fitText(g,t,x,y,max){ let s=String(t); const o=s; while(g.measureText(s).width>max && s.length>2) s=s.slice(0,-2); if(s!==o) s=s.slice(0,-1)+'…'; g.fillText(s,x,y); }
+function labelTex(rec){
+  return canvasTex(640,300,(g,w,h)=>{ g.fillStyle='#fdfcf9'; g.fillRect(0,0,w,h);
+    g.fillStyle='#1c1b19'; g.font='700 46px "Bricolage Grotesque", sans-serif'; fitText(g, rec.author||'Neznámý autor', 34, 80, w-68);
+    g.font='italic 38px "Bricolage Grotesque", serif'; fitText(g, rec.title||'Bez názvu', 34, 140, w-68);
+    g.fillStyle='#6b675f'; g.font='28px "IBM Plex Mono", monospace'; fitText(g, [rec.technique, rec.year].filter(Boolean).join(', ') || '—', 34, 200, w-68);
+    if(rec.sample){ g.fillStyle='#2340b8'; g.font='500 24px "IBM Plex Mono", monospace'; g.fillText('UKÁZKA', 34, 256); } });
+}
+const placeholderTex = canvasTex(64,64,(g,w,h)=>{ g.fillStyle='#d8d3ca'; g.fillRect(0,0,w,h); g.fillStyle='#bdb6aa'; g.fillRect(0,0,w/2,h/2); g.fillRect(w/2,h/2,w/2,h/2); });
+
+function hang(rec, key, animate){
+  const slot=SLOTS[rec.slot]; if(!slot) return;
+  const group=new THREE.Group();
+  group.position.set(slot.x + slot.nx*0.001, slot.y, slot.z + slot.nz*0.001); group.rotation.y=slot.ry;
+  const w=rec.w>0?rec.w:4, h=rec.h>0?rec.h:3;
+  const maxW=2.3, maxH=slot.maxH, a=w/h; let W,Hh; if(a>maxW/maxH){ W=maxW; Hh=W/a; } else { Hh=maxH; W=Hh*a; }
+  const artMat=new THREE.MeshBasicMaterial({map:placeholderTex});
+  if(rec.canvas){ const t=new THREE.CanvasTexture(rec.canvas); t.encoding=THREE.sRGBEncoding; t.anisotropy=ANISO; artMat.map=t; }
+  else { new THREE.TextureLoader().load(rec.src, t=>{ t.encoding=THREE.sRGBEncoding; t.anisotropy=ANISO; artMat.map=t; artMat.needsUpdate=true; }, undefined, ()=>{}); }
+  const halo=new THREE.Mesh(new THREE.PlaneGeometry(W+2.6,Hh+2.4), haloMat); halo.position.set(0,.1,.004); group.add(halo);
+  const frame=new THREE.Mesh(new THREE.BoxGeometry(W+.2,Hh+.2,.08), goldMat); frame.position.z=.04; group.add(frame);
+  const inner=new THREE.Mesh(new THREE.BoxGeometry(W+.06,Hh+.06,.085), new THREE.MeshLambertMaterial({color:'#3a2a18'})); inner.position.z=.043; group.add(inner);
+  const art=new THREE.Mesh(new THREE.PlaneGeometry(W,Hh), artMat); art.position.z=.0875; art.userData.slot=rec.slot; group.add(art);
+  const lab=new THREE.Mesh(new THREE.PlaneGeometry(.48,.225), new THREE.MeshBasicMaterial({map:labelTex(rec)})); lab.position.set(W/2+.46, -Hh/2+.12, .01); group.add(lab);
+  // stropní reflektor mířící na obraz + světelný kužel
+  const F=new THREE.Vector3(0, H-slot.y-.35, 2.6), P=new THREE.Vector3(0,0,.09), dir=F.clone().sub(P), L=dir.length();
+  const fix=new THREE.Group(); fix.position.copy(F); group.add(fix);
+  const can=new THREE.Mesh(new THREE.CylinderGeometry(.09,.07,.24,14), fixMat); can.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize()); fix.add(can);
+  const stem=new THREE.Mesh(new THREE.CylinderGeometry(.015,.015,.35,6), goldMat); stem.position.y=.2; fix.add(stem);
+  const cone=new THREE.Mesh(new THREE.ConeGeometry(Math.max(W,Hh)*.62, L, 28, 1, true), coneMat);
+  cone.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize()); cone.position.copy(P).addScaledVector(dir,.5); group.add(cone);
+  scene.add(group); clickables.push(art);
+  hung.set(rec.slot,{rec,key,group,mesh:art});
+  if(animate){ group.scale.setScalar(.01); group.userData.grow=0; }
+}
+const SHARED_MATS=new Set([haloMat,coneMat,fixMat,goldMat]);
+function unhang(i){
+  const h=hung.get(i); if(!h) return; scene.remove(h.group);
+  h.group.traverse(o=>{ if(o.geometry) o.geometry.dispose(); if(o.material && !SHARED_MATS.has(o.material)){ const m=o.material.map; if(m && m!==haloTex && m!==placeholderTex) m.dispose(); o.material.dispose(); } });
+  const k=clickables.indexOf(h.mesh); if(k>=0) clickables.splice(k,1); hung.delete(i);
+  if(current===h){ current=null; closeAll(); }
+}
+
+/* ================= ukázková díla ================= */
+function rng(seed){ return ()=>{ seed|=0; seed=seed+0x6D2B79F5|0; let t=Math.imul(seed^seed>>>15,1|seed); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+function sampleCanvas(kind,w,h){
+  const c=document.createElement('canvas'); c.width=w; c.height=h; const g=c.getContext('2d'); const r=rng(kind*97+13);
+  if(kind===0){ g.fillStyle='#7a1f1a'; g.fillRect(0,0,w,h);
+    [['#dd5b2c',.08,.06,.84,.44],['#2a1210',.1,.56,.8,.36]].forEach(([col,x,y,fw,fh])=>{ g.save(); g.shadowColor=col; g.shadowBlur=40; g.fillStyle=col; g.fillRect(x*w,y*h,fw*w,fh*h); g.restore(); }); }
+  if(kind===1){ g.fillStyle='#ebe3d2'; g.fillRect(0,0,w,h); g.globalCompositeOperation='multiply'; const pal=['#1f3a8a','#e0a526','#c0392b','#2b2b2b','#5aa2c8'];
+    for(let i=0;i<9;i++){ g.fillStyle=pal[i%pal.length]; g.globalAlpha=.85; g.beginPath(); g.arc(r()*w, r()*h, 40+r()*w*.22, 0, Math.PI*2); g.fill(); }
+    g.globalCompositeOperation='source-over'; g.globalAlpha=1; }
+  if(kind===2){ const hz=h*.6; let gr=g.createLinearGradient(0,0,0,hz); gr.addColorStop(0,'#3d4f7c'); gr.addColorStop(.6,'#e7826a'); gr.addColorStop(1,'#f6c08a'); g.fillStyle=gr; g.fillRect(0,0,w,hz);
+    g.fillStyle='#fff1d0'; g.beginPath(); g.arc(w*.63,hz-20,h*.09,0,Math.PI*2); g.fill();
+    gr=g.createLinearGradient(0,hz,0,h); gr.addColorStop(0,'#2c3e5a'); gr.addColorStop(1,'#10151f'); g.fillStyle=gr; g.fillRect(0,hz,w,h-hz);
+    g.fillStyle='rgba(255,228,190,.5)'; for(let i=0;i<14;i++){ const ww=(1-i/14)*w*.14; g.fillRect(w*.63-ww/2, hz+8+i*16, ww, 4); } }
+  if(kind===3){ const pal=['#0f4c5c','#e36414','#fb8b24','#9a031e','#5f0f40','#efe6d8']; let x=0; while(x<w){ const s=12+r()*90; g.fillStyle=pal[Math.floor(r()*pal.length)]; g.fillRect(x,0,s+1,h); x+=s; } }
+  if(kind===4){ g.fillStyle='#efe6d4'; g.fillRect(0,0,w,h); g.fillStyle='#c62d21'; g.beginPath(); g.arc(w*.62,h*.3,w*.2,0,Math.PI*2); g.fill();
+    g.save(); g.translate(w/2,h/2); g.rotate(-.55); g.fillStyle='#161616'; g.fillRect(-w*.7,-30,w*1.4,60); g.fillStyle='#c62d21'; g.fillRect(-w*.3,90,w*.75,26); g.fillStyle='#161616'; g.fillRect(-w*.1,150,w*.35,14); g.restore();
+    g.fillStyle='#161616'; g.fillRect(w*.12,h*.72,w*.08,h*.18); }
+  if(kind===5){ const pal=['#e9c46a','#264653','#e76f51','#f4f1e8','#2a9d8f','#1d1d1d'], cols=6, rows=8, cw=w/cols, ch=h/rows;
+    for(let i=0;i<cols;i++) for(let j=0;j<rows;j++){ g.fillStyle=pal[Math.floor(r()*pal.length)]; g.fillRect(i*cw,j*ch,cw+1,ch+1);
+      if(r()<.45){ g.fillStyle=pal[Math.floor(r()*pal.length)]; g.beginPath(); const q=Math.floor(r()*4); g.arc(i*cw+(q%2)*cw, j*ch+(q>1?ch:0), Math.min(cw,ch), 0, Math.PI*2); g.save(); g.clip(); g.fillRect(i*cw,j*ch,cw,ch); g.restore(); } } }
+  const id=g.getImageData(0,0,w,h), d=id.data; for(let i=0;i<d.length;i+=4){ const n=(r()-.5)*18; d[i]+=n; d[i+1]+=n; d[i+2]+=n; } g.putImageData(id,0,0);
+  return c;
+}
+const SAMPLES = [
+  {slot:1,  kind:0, w:800, h:1000, title:'Červené pole',      technique:'akryl na plátně'},
+  {slot:3,  kind:2, w:1200,h:800,  title:'Večerní horizont',  technique:'olej na plátně'},
+  {slot:5,  kind:1, w:1000,h:1000, title:'Kompozice s kruhy', technique:'akvarel'},
+  {slot:16, kind:3, w:1100,h:750,  title:'Rytmus',            technique:'tempera na desce'},
+  {slot:24, kind:4, w:800, h:1000, title:'Konstrukce',        technique:'akryl na plátně'},
+  {slot:26, kind:5, w:900, h:1200, title:'Mozaika',           technique:'kvaš na papíře'}
+].map((s,i)=>({...s, id:'sample-'+i, sample:true, author:'Ukázkové dílo', year:'2026'}));
+const sampleBySlot = new Map(SAMPLES.map(s=>[s.slot,s]));
+function sampleRec(s){ if(!s.canvas) s.canvas=sampleCanvas(s.kind,s.w,s.h); return s; }
+
+/* ============ stav sálu: co má viset kde ============ */
+// slotDocs: slot -> {kind:'art', rec} | {kind:'empty'}   (sdílený i místní režim)
+let slotDocs = new Map();
+let firstSync = true;
+function applyWall(){
+  for(let i=0;i<SLOTS.length;i++){
+    const d=slotDocs.get(i);
+    let want=null, key='';
+    if(d && d.kind==='art'){ want=d.rec; key='a:'+d.rec.id+':'+(d.rec.assetId||'')+':'+d.rec.title+':'+d.rec.author; }
+    else if(!d && sampleBySlot.has(i)){ want=sampleRec(sampleBySlot.get(i)); key='s:'+want.id; }
+    const cur=hung.get(i);
+    if(cur && cur.key===key) continue;
+    if(cur) unhang(i);
+    if(want){ hang(want,key,!firstSync);
+      if(!firstSync && want.by && want.by!==me) toast(`Nový obraz na ${SLOTS[i].wall}: ${want.title||'Bez názvu'}`); }
+  }
+  firstSync=false; updateStat();
+}
+function slotState(i){ const d=slotDocs.get(i); if(d) return d.kind==='art'?'art':'free'; return sampleBySlot.has(i)?'sample':'free'; }
+function updateStat(){
+  const free=SLOTS.filter((_,i)=>slotState(i)!=='art'&&slotState(i)!=='sample').length;
+  $('#stat').textContent=`${mode==='shared'?'Sdílený sál':'Sál v tomto prohlížeči'} · ${hung.size} děl · ${free} volných míst`;
+}
+
+/* ============ schopnosti platformy ============ */
+const caps={db:null,user:null,assets:null,room:null};
+let mode='local', me=null, canModerate=false;
+async function initCaps(){
+  if(!(window.claude && typeof window.claude.use==='function')) return;
+  const got=await Promise.all(['db','user','assets','room'].map(n=>window.claude.use(n).catch(()=>null)));
+  [caps.db,caps.user,caps.assets,caps.room]=got;
+  if(caps.db && caps.user){ try{ me=await caps.user.id(); }catch(e){ me=null; } if(me) mode='shared'; }
+  if(caps.user){ try{ canModerate=!!(await caps.user.canEdit()); }catch(e){} }
+}
+
+/* ---- místní úložiště (záložní režim) ---- */
+let idb=null;
+function openDB(){ return new Promise(res=>{ try{ const rq=indexedDB.open('otevrena-galerie',1); rq.onupgradeneeded=()=>rq.result.createObjectStore('paintings',{keyPath:'id'}); rq.onsuccess=()=>res(rq.result); rq.onerror=()=>res(null); rq.onblocked=()=>res(null); }catch(e){ res(null); } }); }
+function idbAll(){ return new Promise(res=>{ if(!idb) return res([]); try{ const rq=idb.transaction('paintings').objectStore('paintings').getAll(); rq.onsuccess=()=>res(rq.result||[]); rq.onerror=()=>res([]); }catch(e){ res([]); } }); }
+function idbPut(rec){ return new Promise(res=>{ if(!idb) return res(false); try{ const tx=idb.transaction('paintings','readwrite'); tx.objectStore('paintings').put(rec); tx.oncomplete=()=>res(true); tx.onerror=()=>res(false); }catch(e){ res(false); } }); }
+function idbDel(id){ return new Promise(res=>{ if(!idb) return res(false); try{ const tx=idb.transaction('paintings','readwrite'); tx.objectStore('paintings').delete(id); tx.oncomplete=()=>res(true); tx.onerror=()=>res(false); }catch(e){ res(false); } }); }
+let hiddenSamples=[]; try{ hiddenSamples=JSON.parse(store.get('og-hidden')||'[]'); }catch(e){}
+async function startLocal(){
+  idb=await openDB(); const mine=await idbAll();
+  slotDocs=new Map();
+  SAMPLES.forEach(s=>{ if(hiddenSamples.includes(s.id)) slotDocs.set(s.slot,{kind:'empty'}); });
+  mine.forEach(r=>{ if(SLOTS[r.slot]) slotDocs.set(r.slot,{kind:'art',rec:r}); });
+  firstSync=true; applyWall();
+}
+
+/* ---- sdílený režim ---- */
+function cleanStr(v,n){ return typeof v==='string'?v.slice(0,n):''; }
+function docToEntry(id,d){
+  if(!d) return null;
+  if(d.empty) return {kind:'empty'};
+  if(typeof d.assetId!=='string' || !/^[A-Za-z0-9_-]{8,64}$/.test(d.assetId)) return null;
+  const slot=Number(d.slot); if(!SLOTS[slot]) return null;
+  return {kind:'art', rec:{ id, slot, assetId:d.assetId, src:'/_blob/'+d.assetId, w:+d.w||4, h:+d.h||3,
+    author:cleanStr(d.author,60)||'Neznámý autor', title:cleanStr(d.title,80), technique:cleanStr(d.technique,60), year:cleanStr(d.year,9),
+    by:typeof d.by==='string'?d.by:null, created:+d.created||0 }};
+}
+function startShared(){
+  const col=caps.db.collection('paintings');
+  const timer=setTimeout(()=>{ $('#stat').textContent='Sál se zatím nedaří načíst, zkouším dál…'; },10000);
+  col.onSnapshot(snap=>{
+    if(!snap.metadata.fromCache) clearTimeout(timer);
+    const m=new Map();
+    snap.docs.forEach(doc=>{ const e=docToEntry(doc.id,doc.data()); if(!e) return; const i=/^slot-(\d+)$/.exec(doc.id); if(!i) return; const s=+i[1]; if(SLOTS[s]){ if(e.rec) e.rec.slot=s; m.set(s,e); } });
+    slotDocs=m; applyWall();
+  }, err=>{ clearTimeout(timer); $('#stat').textContent='Sdílený sál teď není dostupný.'; });
+}
+async function claimSlot(order, body){
+  for(const i of order){
+    const ref=caps.db.doc('paintings/slot-'+i);
+    let lease; try{ lease=await ref.acquire({holder:me+'-'+Date.now(), ttlMs:6000}); }catch(e){ continue; }
+    if(!lease.acquired) continue;
+    let d=null; try{ const s=await ref.get(); d=s.exists?s.data():null; }catch(e){ continue; }
+    if(d && d.assetId && !d.empty) continue;
+    await ref.set({...body, slot:i});
+    return i;
+  }
+  return -1;
+}
+
+/* ================= postavy ================= */
+const darkMat = new THREE.MeshLambertMaterial({color:'#2b2a28'});
+const shadowTex = canvasTex(128,128,(g,w,h)=>{ const gr=g.createRadialGradient(w/2,h/2,2,w/2,h/2,w/2); gr.addColorStop(0,'rgba(0,0,0,.35)'); gr.addColorStop(1,'rgba(0,0,0,0)'); g.fillStyle=gr; g.fillRect(0,0,w,h); });
+const blobGeo=new THREE.PlaneGeometry(1.1,1.1), blobMat=new THREE.MeshBasicMaterial({map:shadowTex,transparent:true,depthWrite:false});
+function makeAvatar(look){
+  const g=new THREE.Group(); scene.add(g);
+  const blob=new THREE.Mesh(blobGeo,blobMat); blob.rotation.x=-Math.PI/2; blob.position.y=.01; g.add(blob);
+  const av={g,sprite:null,name:null,walkT:0,facing:Math.PI,body:null,mats:[],lookKey:''};
+  buildBody(av,look); return av;
+}
+function buildBody(av,look){
+  look=cleanLook(look); const key=JSON.stringify(look); if(av.lookKey===key) return; av.lookKey=key;
+  if(av.body){ av.g.remove(av.body); av.body.traverse(o=>{ if(o.geometry) o.geometry.dispose(); }); av.mats.forEach(m=>m.dispose()); }
+  av.mats=[]; const M=(c,shine)=>{ const m=shine?new THREE.MeshPhongMaterial({color:c,shininess:shine}):new THREE.MeshLambertMaterial({color:c}); av.mats.push(m); return m; };
+  const b=new THREE.Group(); av.body=b; av.g.add(b);
+  const add=(geo,mat,x,y,z,parent=b)=>{ const m=new THREE.Mesh(geo,mat); m.position.set(x,y,z); parent.add(m); return m; };
+  const cloth=M(OUTFITS[look.o]), skin=M(SKINS[look.s]), hair=M(HAIRC[look.c]), pants=M(look.o===5?'#4a4744':'#26252a');
+  const torso=add(new THREE.CylinderGeometry(.27,.32,.75,20),cloth,0,1.0,0);
+  add(new THREE.SphereGeometry(.27,20,12,0,Math.PI*2,0,Math.PI/2),cloth,0,1.37,0);
+  add(new THREE.CylinderGeometry(.08,.09,.12,10),skin,0,1.5,0);
+  const head=add(new THREE.SphereGeometry(.22,24,16),skin,0,1.78,0);
+  [-.08,.08].forEach(x=>add(new THREE.SphereGeometry(.03,10,8),darkMat,x,1.81,.2));
+  add(new THREE.SphereGeometry(.03,8,6),skin,0,1.76,.22);
+  const limb=(len,r,mat,x,y)=>{ const p=new THREE.Group(); p.position.set(x,y,0); b.add(p); add(new THREE.CylinderGeometry(r,r*.9,len,10),mat,0,-len/2,0,p); return p; };
+  av.legL=limb(.62,.1,pants,-.13,.64); av.legR=limb(.62,.1,pants,.13,.64);
+  av.armL=limb(.58,.075,cloth,-.34,1.34); av.armR=limb(.58,.075,cloth,.34,1.34);
+  [av.armL,av.armR].forEach(a=>add(new THREE.SphereGeometry(.07,10,8),skin,0,-.62,0,a));
+  [av.legL,av.legR].forEach(l=>add(new THREE.BoxGeometry(.16,.08,.26),darkMat,0,-.62,.05,l));
+  if(look.d===1) add(new THREE.CylinderGeometry(.3,.52,.6,22),cloth,0,.48,0);
+  if(look.d===2){ add(new THREE.CylinderGeometry(.33,.44,.75,22),cloth,0,.5,0); add(new THREE.TorusGeometry(.2,.05,8,20),cloth,0,1.47,0).rotation.x=Math.PI/2; }
+  av.torso=torso;
+  // účes
+  const cap=(sc=1)=>{ const m=add(new THREE.SphereGeometry(.235*sc,24,14,0,Math.PI*2,0,Math.PI*.55),hair,0,1.79,-.015); m.rotation.x=-.28; return m; };
+  if(look.h===1) cap();
+  if(look.h===2){ cap(); add(new THREE.CylinderGeometry(.2,.25,.55,18),hair,0,1.6,-.08); }
+  if(look.h===3){ cap(); add(new THREE.SphereGeometry(.11,14,10),hair,0,2.0,-.12); }
+  if(look.h===4){ for(let i=0;i<16;i++){ const a=i/16*Math.PI*2, r=.2; add(new THREE.SphereGeometry(.085,10,8),hair,Math.cos(a)*r,1.86+Math.sin(i*1.7)*.05,Math.sin(a)*r-.03); } add(new THREE.SphereGeometry(.15,12,10),hair,0,1.98,-.02); }
+  // pokrývka hlavy
+  av.tall=false;
+  if(look.t===1){ const br=M('#7a1f2b'); const m=add(new THREE.CylinderGeometry(.26,.24,.07,24),br,.03,1.98,-.01); m.rotation.z=.22; add(new THREE.CylinderGeometry(.015,.015,.05,6),br,.04,2.03,0); }
+  if(look.t===2){ const hk=M('#141416',30), band=M('#b8893b',60); add(new THREE.CylinderGeometry(.33,.33,.025,28),hk,0,1.95,0); add(new THREE.CylinderGeometry(.18,.19,.36,24),hk,0,2.13,0); add(new THREE.CylinderGeometry(.192,.192,.05,24),band,0,2.0,0); av.tall=true; }
+  if(look.t===3){ add(new THREE.SphereGeometry(.24,22,12,0,Math.PI*2,0,Math.PI*.5),cloth,0,1.82,0); add(new THREE.BoxGeometry(.24,.025,.2),cloth,0,1.83,.25); }
+  if(look.g===1){ const gm=M('#111111',40); [-.08,.08].forEach(x=>{ add(new THREE.TorusGeometry(.055,.012,8,18),gm,x,1.81,.215); }); add(new THREE.BoxGeometry(.05,.012,.012),gm,0,1.82,.22); }
+  if(av.sprite) av.sprite.position.y=av.tall?2.6:2.32;
+}
+function setAvatarName(av,name){
+  if(av.name===name) return; av.name=name;
+  if(av.sprite){ av.g.remove(av.sprite); av.sprite.material.map.dispose(); av.sprite.material.dispose(); av.sprite=null; }
+  if(!name) return;
+  const t=canvasTex(512,96,(g,w,h)=>{ g.font='600 46px "Bricolage Grotesque", sans-serif'; const tw=Math.min(g.measureText(name).width+44,w); g.fillStyle='rgba(28,27,25,.78)';
+    const x=(w-tw)/2; g.beginPath(); g.moveTo(x+14,10); g.arcTo(x+tw,10,x+tw,h-10,14); g.arcTo(x+tw,h-10,x,h-10,14); g.arcTo(x,h-10,x,10,14); g.arcTo(x,10,x+tw,10,14); g.fill();
+    g.fillStyle='#fff'; g.textAlign='center'; g.textBaseline='middle'; fitText(g, name, w/2, h/2+2, w-50); });
+  av.sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:t,depthTest:false,transparent:true})); av.sprite.scale.set(1.6,.3,1); av.sprite.position.y=av.tall?2.6:2.32; av.g.add(av.sprite);
+}
+function animateAvatar(av,speed,dt){
+  if(speed>.05) av.walkT+=dt*speed*2.6; else av.walkT*=.85;
+  const sw=Math.sin(av.walkT)*.6*Math.min(1,speed/1.5);
+  av.legL.rotation.x=sw; av.legR.rotation.x=-sw; av.armL.rotation.x=-sw*.8; av.armR.rotation.x=sw*.8;
+  av.body.position.y=(speed>.05?Math.abs(Math.cos(av.walkT))*.03:0);
+}
+function removeAvatar(av){ setAvatarName(av,null); scene.remove(av.g); if(av.body) av.body.traverse(o=>{ if(o.geometry) o.geometry.dispose(); }); av.mats.forEach(m=>m.dispose()); }
+
+const self = makeAvatar(visitor.look);
+self.g.position.set(0,0,9.2);
+/* ---- návštěvníci řízení počítačem: chodí od obrazu k obrazu ---- */
+const WAY=[[0,9],[0,-9],[-12.5,8.5],[12.5,8.5],[-12.5,-8.5],[12.5,-8.5],[-3.5,4.5],[3.5,4.5],[-3.5,-4.5],[3.5,-4.5],[-10.5,5],[10.5,5],[-10.5,-5],[10.5,-5]];
+function segClear(ax,az,bx,bz){
+  const dx=bx-ax, dz=bz-az;
+  for(const o of OBST){ const hx=o.hx+.5, hz=o.hz+.5; let t0=0,t1=1,miss=false;
+    for(const [p,d,lo,hi] of [[ax,dx,o.x-hx,o.x+hx],[az,dz,o.z-hz,o.z+hz]]){
+      if(Math.abs(d)<1e-6){ if(p<lo||p>hi){ miss=true; break; } }
+      else { let ta=(lo-p)/d, tb=(hi-p)/d; if(ta>tb){ const q=ta; ta=tb; tb=q; } t0=Math.max(t0,ta); t1=Math.min(t1,tb); if(t0>t1){ miss=true; break; } } }
+    if(!miss) return false; }
+  return true;
+}
+const npcs=[[-12,8],[12,-8],[-4,-8],[13,9]].map((st,i)=>{ const av=makeAvatar(randomLook()); av.g.position.set(st[0],0,st[1]); return {av,path:[],wait:1.5+i*2.5,look:null,t:0}; });
+function npcPlan(n){
+  const arts=[...hung.values()]; if(!arts.length){ n.wait=5; return; }
+  const h=arts[Math.floor(Math.random()*arts.length)], sl=SLOTS[h.rec.slot], back=2+Math.random()*.9, side=(Math.random()-.5)*1.2;
+  const tx=sl.x+sl.nx*back+sl.nz*side, tz=sl.z+sl.nz*back-sl.nx*side, p=n.av.g.position;
+  if(npcs.some(o=>o!==n && o.goal && Math.hypot(o.goal[0]-tx,o.goal[1]-tz)<1.2)){ n.wait=1; return; }
+  if(segClear(p.x,p.z,tx,tz)) n.path=[[tx,tz]];
+  else { let best=null,bd=1e9;
+    for(const w of WAY){ if(segClear(p.x,p.z,w[0],w[1]) && segClear(w[0],w[1],tx,tz)){ const d=Math.hypot(p.x-w[0],p.z-w[1])+Math.hypot(w[0]-tx,w[1]-tz); if(d<bd){ bd=d; best=w; } } }
+    if(!best){ const w=WAY[Math.floor(Math.random()*WAY.length)]; if(segClear(p.x,p.z,w[0],w[1])){ n.path=[w]; n.look=null; n.goal=w; n.t=0; } else n.wait=1; return; }
+    n.path=[best,[tx,tz]]; }
+  n.goal=[tx,tz]; n.look=Math.atan2(-sl.nx,-sl.nz); n.t=0;
+}
+function updateNPCs(dt){
+  npcs.forEach(n=>{ const av=n.av, p=av.g.position; let speed=0;
+    if(n.path.length){ n.t+=dt; const [tx,tz]=n.path[0], dx=tx-p.x, dz=tz-p.z, d=Math.hypot(dx,dz);
+      if(d<.15 || n.t>25){ n.path.shift(); if(!n.path.length || n.t>25){ n.path=[]; n.wait=4+Math.random()*7; } }
+      else { speed=1.25; const st=Math.min(d,speed*dt); p.x+=dx/d*st; p.z+=dz/d*st; collide(p,.35); av.facing=angLerp(av.facing,Math.atan2(dx,dz),Math.min(1,dt*6)); } }
+    else { if(n.look!=null) av.facing=angLerp(av.facing,n.look,Math.min(1,dt*3)); n.wait-=dt; if(n.wait<=0) npcPlan(n); }
+    av.g.rotation.y=av.facing; animateAvatar(av,speed,dt);
+  });
+}
+
+
+/* ---- ostatní návštěvníci (room) ---- */
+const remotes = new Map(); // peer -> {av, tx, tz, tf}
+function okColor(c){ return typeof c==='string' && /^#[0-9a-fA-F]{6}$/.test(c) ? c : '#777777'; }
+function onPeersChange(ch){
+  ch.left.forEach(p=>{ const r=remotes.get(p.peer); if(r){ removeAvatar(r.av); remotes.delete(p.peer); } });
+  ch.joined.concat(ch.updated).forEach(p=>{
+    if(p.sameTab || p.kind!=='viewer') return;
+    const pr=p.presence||{};
+    if(typeof pr.x!=='number' || typeof pr.z!=='number'){ return; }
+    let r=remotes.get(p.peer);
+    const lk=cleanLook(pr.l&&typeof pr.l==='object'?pr.l:null);
+    if(!r){ r={av:makeAvatar(lk), tx:pr.x, tz:pr.z, tf:0}; r.av.g.position.set(pr.x,0,pr.z); remotes.set(p.peer,r); }
+    r.tx=Math.max(-RW,Math.min(RW,pr.x)); r.tz=Math.max(-RD,Math.min(RD,pr.z)); r.tf=typeof pr.f==='number'?pr.f:0;
+    buildBody(r.av, lk); setAvatarName(r.av, cleanStr(pr.n,40) || (p.guest?'Host':'Návštěvník'));
+  });
+  updateOnline();
+}
+function updateOnline(){
+  const el=$('#online'); if(!caps.room){ el.hidden=true; return; }
+  const n=remotes.size+1; el.hidden=false;
+  el.textContent = n===1 ? 'V sále jste zatím sami' : `V sále ${n} ${n<5?'návštěvníci':'návštěvníků'}`;
+}
+let lastSent=0, lastKey='';
+function sendPresence(now){
+  if(!caps.room || !active || now-lastSent<90) return;
+  const p={x:+self.g.position.x.toFixed(2), z:+self.g.position.z.toFixed(2), f:+facing.toFixed(2), l:visitor.look, n:visitor.name.slice(0,40)};
+  const k=JSON.stringify(p); if(k===lastKey) return; lastKey=k; lastSent=now;
+  caps.room.presence(p).catch(()=>{});
+}
+
+/* ================= ovládání ================= */
+let yaw=0, pitch=.3, dist=5.4, facing=Math.PI;
+const keys={}, joy={x:0,y:0}; let active=false, nearest=null, current=null;
+const modalOpen=()=>!$('#uploadDlg').hidden||!$('#detailDlg').hidden||!$('#helpDlg').hidden||!$('#entry').hidden;
+addEventListener('keydown',e=>{
+  if(e.key==='Escape'){ closeAll(); return; }
+  if(modalOpen()||/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  keys[e.code]=true; if(e.code==='KeyE' && nearest) openDetail(nearest); if(/Arrow/.test(e.code)) e.preventDefault();
+});
+addEventListener('keyup',e=>{ keys[e.code]=false; });
+addEventListener('blur',()=>{ for(const k in keys) keys[k]=false; });
+let drag=null;
+canvas.addEventListener('pointerdown',e=>{ drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,id:e.pointerId}; canvas.setPointerCapture(e.pointerId); canvas.classList.add('dragging'); });
+canvas.addEventListener('pointermove',e=>{ if(!drag||drag.id!==e.pointerId) return; const dx=e.clientX-drag.x, dy=e.clientY-drag.y; drag.x=e.clientX; drag.y=e.clientY; yaw-=dx*.0055; pitch=Math.min(.95,Math.max(.02,pitch+dy*.0035)); });
+canvas.addEventListener('pointerup',e=>{ if(!drag) return; const moved=Math.hypot(e.clientX-drag.sx,e.clientY-drag.sy); drag=null; canvas.classList.remove('dragging'); if(moved<6 && active) pick(e.clientX,e.clientY); });
+canvas.addEventListener('pointercancel',()=>{ drag=null; canvas.classList.remove('dragging'); });
+canvas.addEventListener('wheel',e=>{ e.preventDefault(); dist=Math.min(9,Math.max(2.4,dist+e.deltaY*.004)); },{passive:false});
+const ray=new THREE.Raycaster(), ndc=new THREE.Vector2();
+function pick(cx,cy){ ndc.set(cx/innerWidth*2-1, -(cy/innerHeight)*2+1); ray.setFromCamera(ndc,camera);
+  const hit=ray.intersectObjects(clickables.concat(occluders))[0]; if(hit && hit.object.userData.slot!=null) openDetail(hung.get(hit.object.userData.slot)); }
+const stick=$('#stick'), knob=$('#knob'); let stickId=null;
+function stickMove(e){ const r=stick.getBoundingClientRect(); let dx=e.clientX-(r.left+r.width/2), dy=e.clientY-(r.top+r.height/2); const m=Math.hypot(dx,dy), R=44; if(m>R){ dx*=R/m; dy*=R/m; } knob.style.transform=`translate(${dx}px,${dy}px)`; joy.x=dx/R; joy.y=dy/R; }
+stick.addEventListener('pointerdown',e=>{ stickId=e.pointerId; stick.setPointerCapture(e.pointerId); stickMove(e); });
+stick.addEventListener('pointermove',e=>{ if(e.pointerId===stickId) stickMove(e); });
+const stickEnd=()=>{ stickId=null; joy.x=joy.y=0; knob.style.transform=''; };
+stick.addEventListener('pointerup',stickEnd); stick.addEventListener('pointercancel',stickEnd);
+
+/* ================= smyčka ================= */
+const clock=new THREE.Clock(); const target=new THREE.Vector3(), dirV=new THREE.Vector3();
+function angLerp(a,b,t){ const d=((b-a+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)-Math.PI; return a+d*t; }
+function collide(p,r=.38){
+  p.x=Math.max(-RW+r,Math.min(RW-r,p.x)); p.z=Math.max(-RD+r,Math.min(RD-r,p.z));
+  for(const o of OBST){ const dx=p.x-o.x, dz=p.z-o.z, ox=o.hx+r-Math.abs(dx), oz=o.hz+r-Math.abs(dz);
+    if(ox>0&&oz>0){ if(ox<oz) p.x=o.x+(dx<0?-1:1)*(o.hx+r); else p.z=o.z+(dz<0?-1:1)*(o.hz+r); } }
+}
+function tick(now){
+  const dt=Math.min(clock.getDelta(),.05);
+  let f=0,s=0;
+  if(active && !modalOpen()){
+    f=(keys.KeyW||keys.ArrowUp?1:0)-(keys.KeyS||keys.ArrowDown?1:0)-joy.y;
+    s=(keys.KeyD||keys.ArrowRight?1:0)-(keys.KeyA||keys.ArrowLeft?1:0)+joy.x;
+  }
+  const mag=Math.min(1,Math.hypot(f,s)); let speed=0;
+  if(mag>.08){
+    const fx=-Math.sin(yaw), fz=-Math.cos(yaw), rx=Math.cos(yaw), rz=-Math.sin(yaw);
+    dirV.set(fx*f+rx*s,0,fz*f+rz*s).normalize();
+    speed=(keys.ShiftLeft||keys.ShiftRight?5.6:3.1)*mag;
+    self.g.position.addScaledVector(dirV,speed*dt); collide(self.g.position);
+    facing=angLerp(facing,Math.atan2(dirV.x,dirV.z),Math.min(1,dt*12));
+  }
+  const inEntry=!$('#entry').hidden;
+  if(inEntry){ entrySpin+=dt*.45; self.g.rotation.y=facing+Math.sin(entrySpin)*.9; } else self.g.rotation.y=facing;
+  animateAvatar(self,speed,dt);
+  const lt=lightsOn?1:0; if(Math.abs(lightK-lt)>.001 || !applyLight.done){ lightK+= (lt-lightK)*Math.min(1,dt*3); if(Math.abs(lightK-lt)<.002) lightK=lt; applyLight(lightK); applyLight.done=true; } else if(lightsOn) shaftMat.opacity=.28+Math.sin(clock.elapsedTime*.21)*.08;
+  updateAmbient(clock.elapsedTime,dt); updateNPCs(dt);
+  sendPresence(now||0);
+
+  remotes.forEach(r=>{ const p=r.av.g.position; const dx=r.tx-p.x, dz=r.tz-p.z; const d=Math.hypot(dx,dz);
+    const k=Math.min(1,dt*8); p.x+=dx*k; p.z+=dz*k; if(d>3) { p.x=r.tx; p.z=r.tz; }
+    r.av.facing=angLerp(r.av.facing,r.tf,Math.min(1,dt*10)); r.av.g.rotation.y=r.av.facing; animateAvatar(r.av, Math.min(5,d*8), dt); });
+
+  setEntryView(inEntry);
+  if(inEntry){ target.set(self.g.position.x,1.25,self.g.position.z); dirV.set(Math.sin(facing)*Math.cos(.12), Math.sin(.12), Math.cos(facing)*Math.cos(.12)); }
+  else { target.set(self.g.position.x,1.55,self.g.position.z); dirV.set(Math.sin(yaw)*Math.cos(pitch), Math.sin(pitch), Math.cos(yaw)*Math.cos(pitch)); }
+  const cd=inEntry?3.1:dist;
+  ray.set(target,dirV); ray.far=cd; const hit=ray.intersectObjects(occluders)[0]; ray.far=Infinity;
+  camera.position.copy(target).addScaledVector(dirV, hit?Math.max(.6,hit.distance-.25):cd);
+  camera.position.y=Math.min(H-.2,camera.position.y);
+  camera.lookAt(target.x,target.y+(inEntry?0:.15),target.z);
+
+  hung.forEach(h=>{ const u=h.group.userData; if(u.grow!=null){ u.grow=Math.min(1,u.grow+dt*2.2); h.group.scale.setScalar(1-Math.pow(1-u.grow,3)); if(u.grow>=1) delete u.grow; } });
+
+  let best=null, bd=3.4;
+  hung.forEach(h=>{ const sl=SLOTS[h.rec.slot]; const vx=self.g.position.x-sl.x, vz=self.g.position.z-sl.z; const fr=vx*sl.nx+vz*sl.nz; const dd=Math.hypot(vx,vz); if(fr>.3 && dd<bd){ bd=dd; best=h; } });
+  if(best!==nearest){ nearest=best; const p=$('#prompt');
+    if(nearest && active){ p.hidden=false; $('#promptText').innerHTML=`<b>${esc(nearest.rec.author)}</b> · <i>${esc(nearest.rec.title||'Bez názvu')}</i>`; } else p.hidden=true; }
+
+  renderer.render(scene,camera);
+  requestAnimationFrame(tick);
+}
+let entrySpin=0, entryViewOn=null;
+function setEntryView(on){ const w=innerWidth,h=innerHeight, key=on?(w>760?'d':'m')+w+'x'+h:'off'; if(key===entryViewOn) return; entryViewOn=key;
+  if(!on) camera.clearViewOffset(); else if(w>760) camera.setViewOffset(w,h,-Math.min(w*.2,260),0,w,h); else camera.setViewOffset(w,h,0,h*.24,w,h);
+  camera.updateProjectionMatrix(); }
+function esc(s){ return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function resize(){ const w=innerWidth,h=innerHeight; renderer.setSize(w,h,false); camera.aspect=w/h; camera.fov=w<h?72:58; entryViewOn=null; camera.updateProjectionMatrix(); }
+addEventListener('resize',resize); resize();
+
+/* ================= UI ================= */
+function toast(msg){ const t=$('#toast'); t.textContent=msg; t.hidden=false; t.style.opacity=1; clearTimeout(toast.t); toast.t=setTimeout(()=>{ t.style.opacity=0; setTimeout(()=>t.hidden=true,260); },3200); }
+function closeAll(){ ['#uploadDlg','#detailDlg','#helpDlg'].forEach(s=>$(s).hidden=true); if($('#entry').hidden) canvas.focus({preventScroll:true}); }
+document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('pointerdown',e=>{ if(e.target===o && o.id!=='entry') closeAll(); }));
+
+lookUI.addEventListener('change',e=>{ const m=/^lk-(\w)$/.exec(e.target.name||''); if(!m) return; visitor.look[m[1]]=+e.target.value; buildBody(self,visitor.look); });
+$('#btnRandom').onclick=()=>{ visitor.look=cleanLook(randomLook()); syncLookUI(); buildBody(self,visitor.look); };
+$('#entryForm').addEventListener('submit',e=>{
+  e.preventDefault();
+  const n=$('#inName').value.trim(); if(!n){ $('#entryErr').hidden=false; $('#entryErr').textContent='Napište jméno, které se zobrazí nad vaší postavou.'; return; }
+  $('#entryErr').hidden=true;
+  const first=!active;
+  visitor.name=n; store.set('og-name',n); store.set('og-look',JSON.stringify(visitor.look));
+  setAvatarName(self,n);
+  facing=self.g.rotation.y; yaw=facing+Math.PI; pitch=.3;
+  $('#entry').hidden=true; active=true; nearest=undefined; canvas.focus({preventScroll:true});
+  if(first) toast(`Vítejte v sále, ${n}.`);
+});
+$('#btnLook').onclick=()=>{ if(!active) return; closeAll(); $('#entrySubmit').textContent='Hotovo'; $('#entryTitle').textContent='Vaše postava'; entrySpin=0; $('#entry').hidden=false; };
+$('#btnLight').onclick=()=>{ setLights(!lightsOn); toast(lightsOn?'Sál je rozsvícený.':'Zhasnuto. Obrazy osvětlují reflektory.'); };
+addEventListener('keydown',e=>{ if(e.code==='KeyL' && active && !modalOpen() && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) $('#btnLight').click(); });
+$('#btnHelp').onclick=()=>{ $('#helpDlg').hidden=false; };
+$('#helpClose').onclick=closeAll;
+
+function canUpload(){ return mode==='local' || !!caps.assets; }
+let pending=null;
+$('#btnUpload').onclick=()=>{ if(!active) return; pending=null; $('#upForm').reset(); $('#upAuthor').value=visitor.name; $('#upYear').value=String(new Date().getFullYear());
+  $('#dropText').innerHTML='Přetáhněte sem obrázek<br>nebo klikněte a vyberte soubor'; $('#upErr').hidden=true; $('#upSubmit').disabled=false; $('#upSubmit').textContent='Pověsit na zeď'; $('#uploadDlg').hidden=false; };
+$('#upCancel').onclick=closeAll;
+const drop=$('#drop');
+['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{ e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,()=>drop.classList.remove('over')));
+drop.addEventListener('drop',e=>{ e.preventDefault(); const f=e.dataTransfer.files[0]; if(f) readFile(f); });
+$('#file').addEventListener('change',e=>{ const f=e.target.files[0]; if(f) readFile(f); });
+function readFile(f){
+  $('#upErr').hidden=true;
+  if(!/^image\//.test(f.type)){ showUpErr('Tento soubor není obrázek. Vyberte JPG, PNG nebo WebP.'); return; }
+  const url=URL.createObjectURL(f); const img=new Image();
+  img.onload=()=>{ const max=mode==='shared'?2000:1600, k=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight));
+    const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*k); c.height=Math.round(img.naturalHeight*k);
+    const g=c.getContext('2d'); g.fillStyle='#ffffff'; g.fillRect(0,0,c.width,c.height); g.drawImage(img,0,0,c.width,c.height); URL.revokeObjectURL(url);
+    pending={canvas:c, src:c.toDataURL('image/jpeg',.88), w:c.width, h:c.height};
+    $('#dropText').innerHTML=`<img src="${pending.src}" alt="Náhled obrazu">`;
+    if(!$('#upTitle').value) $('#upTitle').value=f.name.replace(/\.[^.]+$/,'').replace(/[_-]+/g,' ');
+  };
+  img.onerror=()=>{ URL.revokeObjectURL(url); showUpErr('Obrázek se nepodařilo otevřít. Zkuste jiný soubor.'); };
+  img.src=url;
+}
+function showUpErr(m){ const e=$('#upErr'); e.textContent=m; e.hidden=false; }
+function slotOrder(){
+  const p=self.g.position, dist=i=>Math.hypot(p.x-SLOTS[i].x,p.z-SLOTS[i].z);
+  const idx=SLOTS.map((_,i)=>i);
+  const free=idx.filter(i=>slotState(i)==='free').sort((a,b)=>dist(a)-dist(b));
+  const samp=idx.filter(i=>slotState(i)==='sample').sort((a,b)=>dist(a)-dist(b));
+  return free.concat(samp);
+}
+$('#upForm').addEventListener('submit',async e=>{
+  e.preventDefault();
+  if(!pending){ showUpErr('Nejdřív vyberte obrázek.'); return; }
+  const order=slotOrder();
+  if(!order.length){ showUpErr('Všechna místa v sále jsou obsazená. Sundejte nejdřív některý obraz.'); return; }
+  const meta={ author:$('#upAuthor').value.trim()||visitor.name, title:$('#upTitle').value.trim()||'Bez názvu', technique:$('#upTech').value.trim(), year:$('#upYear').value.trim(), created:Date.now() };
+  const btn=$('#upSubmit'); btn.disabled=true; btn.textContent='Věším…';
+  if(mode==='shared'){
+    try{
+      const blob=await new Promise(r=>pending.canvas.toBlob(r,'image/jpeg',.88));
+      const up=await caps.assets.upload(blob,{type:'image/jpeg'});
+      const slot=await claimSlot(order,{...meta, assetId:up.id, w:pending.w, h:pending.h, by:me});
+      if(slot<0){ caps.assets.delete(up.id).catch(()=>{}); throw {code:'full'}; }
+      closeAll(); toast(`Obraz visí na ${SLOTS[slot].wall}.`);
+    }catch(err){
+      btn.disabled=false; btn.textContent='Pověsit na zeď';
+      const c=err&&err.code;
+      showUpErr(c==='full'?'Všechna místa v sále jsou obsazená. Sundejte nejdřív některý obraz.'
+        : c==='quota_exceeded'?'Úložiště galerie je plné. Sundejte některé starší obrazy.'
+        : c==='too_large'?'Obrázek je příliš velký. Zkuste menší soubor.'
+        : 'Obraz se nepodařilo nahrát. Zkuste to prosím znovu.');
+    }
+    return;
+  }
+  const slot=order[0];
+  const rec={ id:'p-'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), slot, ...meta, by:visitor.name, src:pending.src, w:pending.w, h:pending.h };
+  slotDocs.set(slot,{kind:'art',rec}); applyWall();
+  const ok=await idbPut(rec); closeAll();
+  toast(ok?`Obraz visí na ${SLOTS[slot].wall}.`:`Obraz visí na ${SLOTS[slot].wall}. Uložit se ho nepodařilo, po obnovení stránky zmizí.`);
+});
+
+function canRemove(rec){
+  if(mode==='local') return true;
+  if(rec.sample) return canModerate;
+  return canModerate || (rec.by && rec.by===me);
+}
+async function openDetail(h){ if(!h) return; current=h; const r=h.rec;
+  $('#dImg').src=r.canvas?r.canvas.toDataURL('image/jpeg',.9):r.src; $('#dImg').alt=`${r.title||'Bez názvu'} – ${r.author}`;
+  $('#dTag').hidden=!r.sample; $('#dAuthor').textContent=r.author; $('#dTitle').textContent=r.title||'Bez názvu';
+  $('#dMeta').textContent=[r.technique,r.year].filter(Boolean).join(', ')||'—';
+  const when=r.created?new Date(r.created).toLocaleDateString('cs-CZ'):'';
+  $('#dBy').textContent=r.sample?'Generovaná ukázka pro prototyp':`Vystaveno ${when} · na ${SLOTS[r.slot].wall}`;
+  $('#dConfirm').hidden=true; $('#dRemove').hidden=!canRemove(r); $('#detailDlg').hidden=false; $('#dClose').focus();
+  if(mode==='shared' && r.by && caps.user){
+    try{ const ps=await caps.user.profiles([r.by]); const nm=(ps[r.by]&&ps[r.by].name)||''; if(current===h && nm) $('#dBy').textContent=`Vystavil(a) ${nm} · ${when} · na ${SLOTS[r.slot].wall}`; }catch(e){}
+  } else if(mode==='local' && !r.sample) $('#dBy').textContent=`Vystavil(a) ${r.by||'—'} · ${when} · na ${SLOTS[r.slot].wall}`;
+}
+$('#prompt').addEventListener('click',()=>nearest&&openDetail(nearest));
+$('#prompt').addEventListener('keydown',e=>{ if(e.key==='Enter'&&nearest) openDetail(nearest); });
+$('#dClose').onclick=closeAll;
+$('#dRemove').onclick=()=>{ $('#dConfirm').hidden=false; $('#dRemove').hidden=true; };
+$('#dNo').onclick=()=>{ $('#dConfirm').hidden=true; $('#dRemove').hidden=false; };
+$('#dYes').onclick=async()=>{
+  if(!current) return; const r=current.rec;
+  if(mode==='shared'){
+    try{ await caps.db.doc('paintings/slot-'+r.slot).set({empty:true, slot:r.slot, removedBy:me, removedAt:Date.now()}); }
+    catch(e){ toast('Obraz se nepodařilo sundat. Zkuste to znovu.'); return; }
+    if(r.assetId && caps.assets && r.by===me) caps.assets.delete(r.assetId).catch(()=>{});
+  } else {
+    if(r.sample){ hiddenSamples.push(r.id); store.set('og-hidden',JSON.stringify(hiddenSamples)); } else await idbDel(r.id);
+    slotDocs.set(r.slot,{kind:'empty'}); applyWall();
+  }
+  current=null; nearest=undefined; closeAll(); toast('Obraz je sundaný, místo na zdi je volné.');
+};
+
+/* ================= start ================= */
+async function start(){
+  try{ await Promise.race([document.fonts.ready, new Promise(r=>setTimeout(r,1500))]); }catch(e){}
+  applyWall();                       // ukázky hned, než odpoví server
+  await initCaps();
+  if(mode==='shared'){
+    $('#entryNote').textContent = caps.assets
+      ? 'Jste ve sdíleném sále: obrazy, které pověsíte, uvidí všichni návštěvníci a ostatní uvidíte chodit po sále.'
+      : 'Jste ve sdíleném sále a můžete si ho prohlédnout. Vystavovat mohou lidé, které autor galerie pozve s oprávněním k úpravám.';
+    $('#btnUpload').hidden=!caps.assets;
+    if(!$('#inName').value && caps.user){ try{ const v=await caps.user.me(); if(v && v.name && !$('#inName').value) $('#inName').value=v.name; }catch(e){} }
+    firstSync=true; startShared();
+    if(caps.room){ caps.room.onPeers(onPeersChange, ()=>{ caps.room=null; remotes.forEach(r=>removeAvatar(r.av)); remotes.clear(); updateOnline(); }); updateOnline(); }
+  } else {
+    await startLocal();
+  }
+  updateStat();
+}
+start();
+requestAnimationFrame(tick);
+})();
+</script>
+
+</body>
+</html>
